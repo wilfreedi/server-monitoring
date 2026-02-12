@@ -1,0 +1,12 @@
+[Unit]
+Description=Server Monitoring (CPU/RAM/Disk)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/server-monitoring.env
+ExecStart=/usr/local/bin/server-monitoring
+User=root
+Group=root
+
