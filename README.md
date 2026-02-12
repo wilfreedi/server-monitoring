@@ -46,8 +46,8 @@ GOOS=linux GOARCH=arm64 go build -o server-monitoring-linux-arm64 ./cmd/server-m
 На сервере выполните:
 
 ```bash
-BINARY_URL="https://github.com/wilfreedi/server-monitoring/releases/download/1.0.0/server-monitoring-linux-amd64" \
-  curl -fsSL https://raw.githubusercontent.com/wilfreedi/server-monitoring/master/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/wilfreedi/server-monitoring/master/install.sh -o /tmp/install.sh
+BINARY_URL="https://github.com/wilfreedi/server-monitoring/releases/download/1.0.0/server-monitoring-linux-amd64" bash /tmp/install.sh
 ```
 
 Установщик спросит все параметры и сам:

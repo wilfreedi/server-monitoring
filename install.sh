@@ -52,7 +52,7 @@ if [[ -z "$BINARY_URL" ]]; then
   exit 1
 fi
 
-API_URL_DEFAULT="https://acmen.ru/api/v1/telegram/"
+API_URL_DEFAULT="https://acmen.ru/api/v1/telegram/sendMessage"
 ENV_PATH_DEFAULT="/etc/server-monitoring.env"
 
 prompt API_URL "API URL" "$API_URL_DEFAULT"
