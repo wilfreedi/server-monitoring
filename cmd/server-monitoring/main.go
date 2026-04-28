@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -18,13 +19,12 @@ import (
 )
 
 type Config struct {
-	APIURL          string
-	APIToken        string
-	ChatID          string
-	MessageThreadID string
-	CPUThreshold    float64
-	MemThreshold    float64
-	DiskThreshold   float64
+	APIURL        string
+	APIToken      string
+	VKPeerID      int64
+	CPUThreshold  float64
+	MemThreshold  float64
+	DiskThreshold float64
 }
 
 func main() {
@@ -43,6 +43,14 @@ func main() {
 		alerts = append(alerts, fmt.Sprintf("CPU: ошибка чтения (%v)", err))
 	} else if cpuUsage >= cfg.CPUThreshold {
 		alerts = append(alerts, fmt.Sprintf("CPU: %.1f%% (порог %.0f%%)", cpuUsage, cfg.CPUThreshold))
+		top, err := topCPUProcesses(5, 200*time.Millisecond)
+		if err != nil {
+			alerts = append(alerts, fmt.Sprintf("CPU топ: ошибка чтения (%v)", err))
+		} else {
+			for i, p := range top {
+				alerts = append(alerts, fmt.Sprintf("CPU топ %d: PID %d %s %.1f%%", i+1, p.PID, p.Command, p.CPUPercent))
+			}
+		}
 	}
 
 	memUsage, err := readMemUsage()
@@ -83,10 +91,14 @@ func main() {
 func loadConfig() (Config, error) {
 	cfg := Config{}
 
-	cfg.APIURL = strings.TrimSpace(getenvDefault("API_URL", "https://acmen.ru/api/v1/telegram/"))
+	cfg.APIURL = strings.TrimSpace(getenvDefault("API_URL", "https://acmen.ru/api/v1/vk/sendMessage"))
 	cfg.APIToken = strings.TrimSpace(os.Getenv("API_TOKEN"))
-	cfg.ChatID = strings.TrimSpace(os.Getenv("CHAT_ID"))
-	cfg.MessageThreadID = strings.TrimSpace(os.Getenv("MESSAGE_THREAD_ID"))
+	peerIDRaw := strings.TrimSpace(getenvDefault("VK_PEER_ID", "2000000008"))
+	peerID, err := strconv.ParseInt(peerIDRaw, 10, 64)
+	if err != nil || peerID <= 0 {
+		return Config{}, errors.New("VK_PEER_ID must be a positive integer")
+	}
+	cfg.VKPeerID = peerID
 
 	cfg.CPUThreshold = getenvFloat("CPU_THRESHOLD", 80)
 	cfg.MemThreshold = getenvFloat("RAM_THRESHOLD", 80)
@@ -94,9 +106,6 @@ func loadConfig() (Config, error) {
 
 	if cfg.APIToken == "" {
 		return Config{}, errors.New("API_TOKEN is required")
-	}
-	if cfg.ChatID == "" {
-		return Config{}, errors.New("CHAT_ID is required")
 	}
 	return cfg, nil
 }
@@ -286,6 +295,159 @@ func readCPUSnapshot() (cpuSnapshot, error) {
 	return cpuSnapshot{idle: idle, total: total}, nil
 }
 
+type procSample struct {
+	pid     int
+	command string
+	total   uint64
+}
+
+type procUsage struct {
+	PID        int
+	Command    string
+	CPUPercent float64
+}
+
+func topCPUProcesses(limit int, sampleInterval time.Duration) ([]procUsage, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	firstTotal, err := readCPUSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	first, err := readProcSamples()
+	if err != nil {
+		return nil, err
+	}
+
+	if sampleInterval <= 0 {
+		sampleInterval = 200 * time.Millisecond
+	}
+	time.Sleep(sampleInterval)
+
+	secondTotal, err := readCPUSnapshot()
+	if err != nil {
+		return nil, err
+	}
+	second, err := readProcSamples()
+	if err != nil {
+		return nil, err
+	}
+
+	deltaTotal := secondTotal.total - firstTotal.total
+	if deltaTotal == 0 {
+		return nil, errors.New("invalid cpu delta")
+	}
+
+	usages := make([]procUsage, 0, limit)
+	for pid, s2 := range second {
+		s1, ok := first[pid]
+		if !ok {
+			continue
+		}
+		if s2.total <= s1.total {
+			continue
+		}
+		delta := s2.total - s1.total
+		cpuPercent := (float64(delta) / float64(deltaTotal)) * 100
+		if cpuPercent <= 0 {
+			continue
+		}
+		usages = append(usages, procUsage{
+			PID:        pid,
+			Command:    s2.command,
+			CPUPercent: cpuPercent,
+		})
+	}
+
+	sort.Slice(usages, func(i, j int) bool {
+		return usages[i].CPUPercent > usages[j].CPUPercent
+	})
+	if len(usages) > limit {
+		usages = usages[:limit]
+	}
+	return usages, nil
+}
+
+func readProcSamples() (map[int]procSample, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	samples := make(map[int]procSample, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil || pid <= 0 {
+			continue
+		}
+		statPath := "/proc/" + entry.Name() + "/stat"
+		data, err := os.ReadFile(statPath)
+		if err != nil {
+			continue
+		}
+		sample, ok := parseProcStat(string(data))
+		if !ok {
+			continue
+		}
+		if cmdline := readCmdline(pid); cmdline != "" {
+			sample.command = cmdline
+		}
+		sample.pid = pid
+		samples[pid] = sample
+	}
+	return samples, nil
+}
+
+func parseProcStat(line string) (procSample, bool) {
+	start := strings.Index(line, "(")
+	end := strings.LastIndex(line, ")")
+	if start == -1 || end == -1 || end <= start {
+		return procSample{}, false
+	}
+	command := strings.TrimSpace(line[start+1 : end])
+	rest := strings.Fields(line[end+1:])
+	if len(rest) < 13 {
+		return procSample{}, false
+	}
+	utime, err := strconv.ParseUint(rest[11], 10, 64)
+	if err != nil {
+		return procSample{}, false
+	}
+	stime, err := strconv.ParseUint(rest[12], 10, 64)
+	if err != nil {
+		return procSample{}, false
+	}
+	return procSample{
+		command: command,
+		total:   utime + stime,
+	}, true
+}
+
+func readCmdline(pid int) string {
+	path := fmt.Sprintf("/proc/%d/cmdline", pid)
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	for i := range data {
+		if data[i] == 0 {
+			data[i] = ' '
+		}
+	}
+	cmd := strings.TrimSpace(string(data))
+	if cmd == "" {
+		return ""
+	}
+	const maxLen = 160
+	if len(cmd) > maxLen {
+		return cmd[:maxLen] + "..."
+	}
+	return cmd
+}
+
 func readMemUsage() (float64, error) {
 	file, err := os.Open("/proc/meminfo")
 	if err != nil {
@@ -346,12 +508,9 @@ func buildMessage(alerts []string) string {
 }
 
 func sendAlert(ctx context.Context, cfg Config, message string) error {
-	payload := map[string]string{
-		"chat_id": cfg.ChatID,
+	payload := map[string]any{
+		"peer_id": cfg.VKPeerID,
 		"message": message,
-	}
-	if cfg.MessageThreadID != "" {
-		payload["message_thread_id"] = cfg.MessageThreadID
 	}
 
 	data, err := json.Marshal(payload)
@@ -374,10 +533,23 @@ func sendAlert(ctx context.Context, cfg Config, message string) error {
 		return err
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return fmt.Errorf("api status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var apiResp struct {
+		Success *bool  `json:"success"`
+		Message string `json:"message"`
+	}
+	if len(body) > 0 && json.Unmarshal(body, &apiResp) == nil {
+		if apiResp.Success != nil && !*apiResp.Success {
+			if apiResp.Message != "" {
+				return errors.New(apiResp.Message)
+			}
+			return errors.New("api returned success=false")
+		}
 	}
 	return nil
 }

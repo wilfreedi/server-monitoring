@@ -52,13 +52,12 @@ if [[ -z "$BINARY_URL" ]]; then
   exit 1
 fi
 
-API_URL_DEFAULT="https://acmen.ru/api/v1/telegram/sendMessage"
+API_URL_DEFAULT="https://acmen.ru/api/v1/vk/sendMessage"
 ENV_PATH_DEFAULT="/etc/server-monitoring.env"
 
 prompt API_URL "API URL" "$API_URL_DEFAULT"
 prompt API_TOKEN "API token" ""
-prompt CHAT_ID "Chat ID" ""
-prompt MESSAGE_THREAD_ID "Message thread id (optional)" ""
+prompt VK_PEER_ID "VK peer_id" "2000000008"
 
 prompt CPU_THRESHOLD "CPU threshold %" "80"
 prompt RAM_THRESHOLD "RAM threshold %" "80"
@@ -66,8 +65,8 @@ prompt DISK_THRESHOLD "Disk threshold %" "80"
 
 prompt ENV_PATH "Env file path" "$ENV_PATH_DEFAULT"
 
-if [[ -z "$API_TOKEN" || -z "$CHAT_ID" ]]; then
-  echo "API_TOKEN and CHAT_ID are required." >&2
+if [[ -z "$API_TOKEN" || -z "$VK_PEER_ID" ]]; then
+  echo "API_TOKEN and VK_PEER_ID are required." >&2
   exit 1
 fi
 
@@ -88,8 +87,7 @@ mkdir -p "$(dirname "$ENV_PATH")"
 cat > "$ENV_PATH" <<__ENV__
 API_URL=$(escape_env "$API_URL")
 API_TOKEN=$(escape_env "$API_TOKEN")
-CHAT_ID=$(escape_env "$CHAT_ID")
-MESSAGE_THREAD_ID=$(escape_env "$MESSAGE_THREAD_ID")
+VK_PEER_ID=$(escape_env "$VK_PEER_ID")
 
 CPU_THRESHOLD=$(escape_env "$CPU_THRESHOLD")
 RAM_THRESHOLD=$(escape_env "$RAM_THRESHOLD")

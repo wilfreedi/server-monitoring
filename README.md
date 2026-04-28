@@ -1,10 +1,12 @@
 # Server Monitoring (CPU/RAM/Disk) — минимальная версия
 
 Простой мониторинг: раз в минуту проверяет CPU/RAM/Disk и отправляет сообщение, если есть превышение порогов.
+Если CPU превышен — дополнительно показывает топ 5 процессов по загрузке CPU.
 
 ## Что делает
 - CPU, RAM, Disk (по всем разделам, кроме псевдо‑ФС)
-- Отправка сообщения в Telegram API при превышении порога
+- Топ 5 процессов по CPU при превышении порога (с командой)
+- Отправка сообщения в VK через `POST /api/v1/vk/sendMessage`
 - Запуск раз в минуту через systemd timer
 - Настройка через `.env`
 
@@ -46,7 +48,7 @@ GOOS=linux GOARCH=arm64 go build -o server-monitoring-linux-arm64 ./cmd/server-m
 На сервере выполните:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wilfreedi/server-monitoring/master/install.sh -o /tmp/install.sh
+curl -fsSL https://raw.githubusercontent.com/wilfreedi/server-monitoring/main/install.sh -o /tmp/install.sh
 BINARY_URL="https://github.com/wilfreedi/server-monitoring/releases/download/1.0.0/server-monitoring-linux-amd64" bash /tmp/install.sh
 ```
 
@@ -85,10 +87,9 @@ sudo systemctl start server-monitoring.service
 Установщик формирует файл `/etc/server-monitoring.env`. Пример:
 
 ```
-API_URL="https://acmen.ru/api/v1/telegram/"
+API_URL="https://acmen.ru/api/v1/vk/sendMessage"
 API_TOKEN="your_token_here"
-CHAT_ID="your_chat_id_here"
-MESSAGE_THREAD_ID=""
+VK_PEER_ID="2000000008"
 
 CPU_THRESHOLD="80"
 RAM_THRESHOLD="80"
@@ -106,7 +107,7 @@ DISK_THRESHOLD="80"
 sudo systemctl start server-monitoring.service
 ```
 
-3. Должно прийти сообщение в Telegram.
+3. Должно прийти сообщение в VK-чат (peer_id `2000000008` по умолчанию).
 
 ---
 
@@ -119,4 +120,3 @@ sudo systemctl start server-monitoring.service
 - RAM: 85.3% (порог 80%)
 - Диск /: 91.0% (использовано 91.0 GiB из 100.0 GiB, порог 80%)
 ```
-
